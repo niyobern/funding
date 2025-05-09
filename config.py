@@ -1,0 +1,65 @@
+from decouple import config
+from typing import Dict, List
+import os
+from pathlib import Path
+
+# Base paths
+BASE_DIR = Path(__file__).resolve().parent
+LOGS_DIR = BASE_DIR / "logs"
+LOGS_DIR.mkdir(exist_ok=True)
+
+# Exchange API credentials
+BINANCE_API_KEY = config('BINANCE_API_KEY', default='')
+BINANCE_API_SECRET = config('BINANCE_API_SECRET', default='')
+
+# Trading parameters
+TRADING_CONFIG = {
+    'MIN_FUNDING_RATE': -0.001,    # -0.1% (increased from -0.01%)
+    'MAX_POSITION_SIZE': 0.2,      # 20% of capital per trade
+    'MAX_LEVERAGE': 5,             # Increased from 3
+    'STOP_LOSS': 0.05,             # 5%
+    'TAKE_PROFIT': 0.02,           # 2%
+    'MIN_LIQUIDITY': 0.01,         # Minimum liquidity in BTC (about $400 at $40k BTC price)
+    'MIN_POSITION_SIZE': 10,       # Set to $10 for testing
+    'MAX_POSITION_SIZE': 10,       # Set to $10 for testing
+    'USE_MAKER_ORDERS': True,      # Use maker orders to reduce fees
+    'USE_BNB_FEES': True,          # Use BNB to pay fees for discounts
+    'MIN_FUNDING_RATE_IMPROVEMENT': 0.3,  # Exit when funding rate improves by 30%
+    'MAX_POSITION_DURATION': 72 * 3600,  # Hold positions for up to 72 hours (9 funding periods)
+}
+
+# Monitoring intervals (in seconds)
+MONITORING_CONFIG = {
+    'CHECK_INTERVAL': 60,          # Check every minute (reduced from 5 minutes)
+    'HEARTBEAT_INTERVAL': 3600,    # 1 hour
+    'POSITION_CHECK_INTERVAL': 10,  # 10 seconds
+}
+
+# Trading pairs to monitor (focusing on high volatility pairs)
+TRADING_PAIRS = [
+    "BTC/USDT",
+    "ETH/USDT",
+    "SOL/USDT",
+    "AVAX/USDT",
+    "MATIC/USDT",
+    "DOGE/USDT",    # Added more volatile pairs
+    "SHIB/USDT",
+    "LINK/USDT",
+    "UNI/USDT",
+    "AAVE/USDT",
+]
+
+# Risk management
+RISK_CONFIG = {
+    'MAX_OPEN_POSITIONS': 3,       # Reduced from 5 to focus on best opportunities
+    'MAX_DAILY_TRADES': 10,        # Reduced from 20 to focus on quality over quantity
+    'MAX_DRAWDOWN': 0.05,          # Reduced from 10% to 5% for tighter risk control
+    'MIN_PROFIT_THRESHOLD': 0.003, # 0.3% minimum profit target after fees
+}
+
+# Logging configuration
+LOG_CONFIG = {
+    'LOG_LEVEL': 'INFO',
+    'LOG_FORMAT': '{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}',
+    'LOG_FILE': str(LOGS_DIR / 'trading_bot.log'),
+} 
