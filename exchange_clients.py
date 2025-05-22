@@ -6,33 +6,67 @@ from config import BINANCE_API_KEY, BINANCE_API_SECRET, TRADING_CONFIG
 
 class BinanceClient:
     def __init__(self):
-        # Initialize spot client
-        self.spot = ccxt.binance({
-            'apiKey': BINANCE_API_KEY,
-            'secret': BINANCE_API_SECRET,
-            'enableRateLimit': True,
-            'options': {
-                'defaultType': 'spot',
-                'useSpotWallet': True,
-                'useBNBFees': TRADING_CONFIG['USE_BNB_FEES'],
-            }
-        })
-        
-        # Initialize futures client
-        self.futures = ccxt.binance({
-            'apiKey': BINANCE_API_KEY,
-            'secret': BINANCE_API_SECRET,
-            'enableRateLimit': True,
-            'options': {
-                'defaultType': 'future',
-            }
-        })
-        
+        try:
+            # Initialize spot client
+            self.spot = ccxt.binance({
+                'apiKey': BINANCE_API_KEY,
+                'secret': BINANCE_API_SECRET,
+                'enableRateLimit': True,
+                'options': {
+                    'defaultType': 'spot',
+                    'useSpotWallet': True,
+                    'useBNBFees': TRADING_CONFIG['USE_BNB_FEES'],
+                }
+            })
+            
+            # Initialize futures client
+            self.futures = ccxt.binance({
+                'apiKey': BINANCE_API_KEY,
+                'secret': BINANCE_API_SECRET,
+                'enableRateLimit': True,
+                'options': {
+                    'defaultType': 'future',
+                }
+            })
+            
+            # Test API connection
+            self._test_connection()
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize exchange clients: {str(e)}")
+            raise
+            
+    def _test_connection(self):
+        """Test API connection and permissions."""
+        try:
+            # Test spot API
+            self.spot.fetch_balance()
+            logger.info("Successfully connected to Binance Spot API")
+            
+            # Test futures API
+            self.futures.fetch_balance()
+            logger.info("Successfully connected to Binance Futures API")
+            
+        except ccxt.AuthenticationError as e:
+            logger.error("Authentication failed. Please check your API credentials.")
+            raise
+        except ccxt.NetworkError as e:
+            logger.error("Network error. Please check your internet connection.")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to test API connection: {str(e)}")
+            raise
+            
     def get_funding_rate(self, symbol: str) -> float:
         """Get the current funding rate for a symbol."""
         try:
             ticker = self.futures.fetch_ticker(symbol)
-            return float(ticker.get('fundingRate', 0))
+            funding_rate = float(ticker.get('fundingRate', 0))
+            logger.debug(f"Current funding rate for {symbol}: {funding_rate*100:.4f}%")
+            return funding_rate
+        except ccxt.NetworkError as e:
+            logger.error(f"Network error while fetching funding rate for {symbol}: {str(e)}")
+            return 0.0
         except Exception as e:
             logger.error(f"Error fetching funding rate for {symbol}: {str(e)}")
             return 0.0
@@ -40,7 +74,13 @@ class BinanceClient:
     def get_order_book(self, symbol: str, limit: int = 10) -> Dict:
         """Get the order book for a symbol."""
         try:
-            return self.spot.fetch_order_book(symbol, limit)
+            order_book = self.spot.fetch_order_book(symbol, limit)
+            if not order_book['bids'] or not order_book['asks']:
+                logger.warning(f"Empty order book for {symbol}")
+            return order_book
+        except ccxt.NetworkError as e:
+            logger.error(f"Network error while fetching order book for {symbol}: {str(e)}")
+            return {'bids': [], 'asks': []}
         except Exception as e:
             logger.error(f"Error fetching order book for {symbol}: {str(e)}")
             return {'bids': [], 'asks': []}
@@ -63,31 +103,59 @@ class BinanceClient:
                          amount: float, price: Optional[float] = None) -> Dict:
         """Create a spot order."""
         try:
+            # Validate amount
+            if amount < TRADING_CONFIG['MIN_POSITION_SIZE']:
+                raise ValueError(f"Order amount {amount} is below minimum {TRADING_CONFIG['MIN_POSITION_SIZE']}")
+            if amount > TRADING_CONFIG['MAX_POSITION_SIZE']:
+                raise ValueError(f"Order amount {amount} exceeds maximum {TRADING_CONFIG['MAX_POSITION_SIZE']}")
+                
             # Always use market orders for spot
-            return self.spot.create_order(
+            order = self.spot.create_order(
                 symbol=symbol,
                 type='MARKET',
                 side=side,
                 amount=amount
             )
+            logger.info(f"Created spot {side} order for {symbol}: {amount} @ MARKET")
+            return order
+        except ccxt.InsufficientFunds as e:
+            logger.error(f"Insufficient funds for spot order on {symbol}: {str(e)}")
+            raise
+        except ccxt.InvalidOrder as e:
+            logger.error(f"Invalid spot order for {symbol}: {str(e)}")
+            raise
         except Exception as e:
             logger.error(f"Error creating spot order for {symbol}: {str(e)}")
-            return {}
+            raise
             
     def create_futures_order(self, symbol: str, order_type: str, side: str, 
                            amount: float, price: Optional[float] = None) -> Dict:
         """Create a futures order."""
         try:
+            # Validate amount
+            if amount < TRADING_CONFIG['MIN_POSITION_SIZE']:
+                raise ValueError(f"Order amount {amount} is below minimum {TRADING_CONFIG['MIN_POSITION_SIZE']}")
+            if amount > TRADING_CONFIG['MAX_POSITION_SIZE']:
+                raise ValueError(f"Order amount {amount} exceeds maximum {TRADING_CONFIG['MAX_POSITION_SIZE']}")
+                
             # Always use market orders for futures to ensure reliable execution
-            return self.futures.create_order(
+            order = self.futures.create_order(
                 symbol=symbol,
                 type='MARKET',
                 side=side,
                 amount=amount
             )
+            logger.info(f"Created futures {side} order for {symbol}: {amount} @ MARKET")
+            return order
+        except ccxt.InsufficientFunds as e:
+            logger.error(f"Insufficient funds for futures order on {symbol}: {str(e)}")
+            raise
+        except ccxt.InvalidOrder as e:
+            logger.error(f"Invalid futures order for {symbol}: {str(e)}")
+            raise
         except Exception as e:
             logger.error(f"Error creating futures order for {symbol}: {str(e)}")
-            return {}
+            raise
             
     def get_balance(self, currency: str = 'USDT') -> float:
         """Get the balance for a specific currency."""

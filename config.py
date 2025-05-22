@@ -2,6 +2,7 @@ from decouple import config
 from typing import Dict, List
 import os
 from pathlib import Path
+from loguru import logger
 
 # Base paths
 BASE_DIR = Path(__file__).resolve().parent
@@ -12,6 +13,11 @@ LOGS_DIR.mkdir(exist_ok=True)
 BINANCE_API_KEY = config('BINANCE_API_KEY', default='')
 BINANCE_API_SECRET = config('BINANCE_API_SECRET', default='')
 
+# Validate API credentials
+if not BINANCE_API_KEY or not BINANCE_API_SECRET:
+    logger.error("Binance API credentials not found! Please set BINANCE_API_KEY and BINANCE_API_SECRET environment variables.")
+    raise ValueError("Missing Binance API credentials")
+
 # Trading parameters
 TRADING_CONFIG = {
     'MIN_FUNDING_RATE': -0.001,    # -0.1% (increased from -0.01%)
@@ -20,8 +26,8 @@ TRADING_CONFIG = {
     'STOP_LOSS': 0.05,             # 5%
     'TAKE_PROFIT': 0.02,           # 2%
     'MIN_LIQUIDITY': 0.01,         # Minimum liquidity in BTC (about $400 at $40k BTC price)
-    'MIN_POSITION_SIZE': 10,       # Set to $10 for testing
-    'MAX_POSITION_SIZE': 10,       # Set to $10 for testing
+    'MIN_POSITION_SIZE': 4,        # Minimum position size of $4 (adjusted to match current balance)
+    'MAX_POSITION_SIZE': 1000,     # Maximum position size of $1000
     'USE_MAKER_ORDERS': True,      # Use maker orders to reduce fees
     'USE_BNB_FEES': True,          # Use BNB to pay fees for discounts
     'MIN_FUNDING_RATE_IMPROVEMENT': 0.3,  # Exit when funding rate improves by 30%
@@ -37,16 +43,16 @@ MONITORING_CONFIG = {
 
 # Trading pairs to monitor (focusing on high volatility pairs)
 TRADING_PAIRS = [
-    "BTC/USDT",
-    "ETH/USDT",
-    "SOL/USDT",
-    "AVAX/USDT",
-    "MATIC/USDT",
-    "DOGE/USDT",    # Added more volatile pairs
-    "SHIB/USDT",
-    "LINK/USDT",
-    "UNI/USDT",
-    "AAVE/USDT",
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "AVAXUSDT",
+    "MATICUSDT",
+    "DOGEUSDT",
+    "SHIBUSDT",
+    "LINKUSDT",
+    "UNIUSDT",
+    "AAVEUSDT",
 ]
 
 # Risk management
