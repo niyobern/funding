@@ -9,19 +9,23 @@ BASE_DIR = Path(__file__).resolve().parent
 LOGS_DIR = BASE_DIR / "logs"
 LOGS_DIR.mkdir(exist_ok=True)
 
+# Paper trading mode
+PAPER_TRADING = config('PAPER_TRADING', default=True, cast=bool)
+PAPER_TRADING_BALANCE = config('PAPER_TRADING_BALANCE', default=1000.0, cast=float)
+
 # Exchange API credentials
 BINANCE_API_KEY = config('BINANCE_API_KEY', default='')
 BINANCE_API_SECRET = config('BINANCE_API_SECRET', default='')
 
-# Validate API credentials
-if not BINANCE_API_KEY or not BINANCE_API_SECRET:
+# Only validate API credentials if not in paper trading mode
+if not PAPER_TRADING and (not BINANCE_API_KEY or not BINANCE_API_SECRET):
     logger.error("Binance API credentials not found! Please set BINANCE_API_KEY and BINANCE_API_SECRET environment variables.")
     raise ValueError("Missing Binance API credentials")
 
 # Trading parameters
 TRADING_CONFIG = {
     'MIN_FUNDING_RATE': -0.001,    # -0.1% (increased from -0.01%)
-    'MAX_POSITION_SIZE': 0.2,      # 20% of capital per trade
+    'MAX_POSITION_PERCENT': 0.2,   # 20% of capital per trade
     'MAX_LEVERAGE': 5,             # Increased from 3
     'STOP_LOSS': 0.05,             # 5%
     'TAKE_PROFIT': 0.02,           # 2%

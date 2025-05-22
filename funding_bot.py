@@ -9,15 +9,23 @@ from pathlib import Path
 
 from config import (
     TRADING_CONFIG, MONITORING_CONFIG,
-    TRADING_PAIRS, RISK_CONFIG, LOG_CONFIG
+    TRADING_PAIRS, RISK_CONFIG, LOG_CONFIG,
+    PAPER_TRADING, PAPER_TRADING_BALANCE
 )
 from exchange_clients import BinanceClient
+from paper_trading import PaperTradingClient
+from trading_reports import TradingReports
 
 class FundingRateBot:
     def __init__(self):
         try:
-            # Initialize exchange client
-            self.binance = BinanceClient()
+            # Initialize exchange client based on mode
+            if PAPER_TRADING:
+                logger.info(f"Initializing bot in PAPER TRADING mode with balance: {PAPER_TRADING_BALANCE} USDT")
+                self.binance = PaperTradingClient(initial_balance=PAPER_TRADING_BALANCE)
+            else:
+                logger.info("Initializing bot in LIVE TRADING mode")
+                self.binance = BinanceClient()
             
             # Initialize state
             self.active_positions: Dict[str, Dict] = {}
@@ -31,6 +39,10 @@ class FundingRateBot:
             
             # Setup logging
             self._setup_logging()
+            
+            # Initialize reporting
+            self.reports = TradingReports()
+            self.reports.set_initial_balance(self.initial_balance)
             
             # Load state if exists
             self._load_state()
@@ -174,8 +186,8 @@ class FundingRateBot:
             # Calculate position size
             usdt_balance = self.binance.get_balance()
             position_size = min(
-                usdt_balance * TRADING_CONFIG['MAX_POSITION_SIZE'],
-                TRADING_CONFIG['MAX_POSITION_SIZE']
+                usdt_balance * TRADING_CONFIG['MAX_POSITION_PERCENT'],  # Percentage of balance
+                TRADING_CONFIG['MAX_POSITION_SIZE']  # Absolute maximum
             )
             
             if position_size < TRADING_CONFIG['MIN_POSITION_SIZE']:
@@ -226,6 +238,17 @@ class FundingRateBot:
                 amount=size
             )
             
+            # Record spot trade
+            self.reports.record_trade({
+                'symbol': symbol,
+                'type': 'OPEN',
+                'side': 'BUY',
+                'amount': size,
+                'price': spot_order['price'],
+                'fees': spot_order['fee'],
+                'funding_rate': funding_rate
+            })
+            
             # Open futures position (let exchange client decide based on price advantage)
             futures_order = self.binance.create_futures_order(
                 symbol=symbol,
@@ -233,6 +256,17 @@ class FundingRateBot:
                 side='SELL',
                 amount=size
             )
+            
+            # Record futures trade
+            self.reports.record_trade({
+                'symbol': symbol,
+                'type': 'OPEN',
+                'side': 'SELL',
+                'amount': size,
+                'price': futures_order['price'],
+                'fees': futures_order['fee'],
+                'funding_rate': funding_rate
+            })
                 
             # Record the position
             self.active_positions[symbol] = {
@@ -247,6 +281,9 @@ class FundingRateBot:
             
             self.daily_trades += 1
             self._save_state()
+            
+            # Print live update
+            self.reports.print_live_updates()
             
             logger.info(f"Opened position for {symbol}")
             logger.info(f"Funding rate: {funding_rate*100:.4f}%")
@@ -314,23 +351,49 @@ class FundingRateBot:
         
         try:
             # Close spot position (always market order)
-            self.binance.create_spot_order(
+            spot_order = self.binance.create_spot_order(
                 symbol=symbol,
                 order_type='MARKET',
                 side='SELL',
                 amount=position['spot_size']
             )
             
+            # Record spot close
+            self.reports.record_trade({
+                'symbol': symbol,
+                'type': 'CLOSE',
+                'side': 'SELL',
+                'amount': position['spot_size'],
+                'price': spot_order['price'],
+                'fees': spot_order['fee'],
+                'profit': (spot_order['price'] - position['spot_order']['price']) * position['spot_size'] - spot_order['fee']
+            })
+            
             # Close futures position (let exchange client decide based on price advantage)
-            self.binance.create_futures_order(
+            futures_order = self.binance.create_futures_order(
                 symbol=symbol,
                 order_type='MARKET',  # This will be overridden if limit order is possible
                 side='BUY',
                 amount=position['futures_size']
             )
+            
+            # Record futures close
+            self.reports.record_trade({
+                'symbol': symbol,
+                'type': 'CLOSE',
+                'side': 'BUY',
+                'amount': position['futures_size'],
+                'price': futures_order['price'],
+                'fees': futures_order['fee'],
+                'profit': (position['futures_order']['price'] - futures_order['price']) * position['futures_size'] - futures_order['fee']
+            })
                 
             logger.info(f"Closed position for {symbol}")
             logger.info(f"Expected profit: {position['expected_profit']:.2f} USDT")
+            
+            # Print live update
+            self.reports.print_live_updates()
+            
             del self.active_positions[symbol]
             self._save_state()
             
@@ -347,6 +410,9 @@ class FundingRateBot:
                 logger.info("Closing all open positions...")
                 for symbol in list(self.active_positions.keys()):
                     self.close_position(symbol)
+                    
+            # Generate final performance report
+            self.reports.generate_performance_report()
             sys.exit(0)
             
         signal.signal(signal.SIGINT, signal_handler)
