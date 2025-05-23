@@ -80,7 +80,26 @@ class FundingRateBot:
             try:
                 with open(state_file, 'r') as f:
                     state = json.load(f)
-                    self.active_positions = state.get('active_positions', {})
+                    # Load positions but validate them
+                    loaded_positions = state.get('active_positions', {})
+                    self.active_positions = {}
+                    
+                    # Validate each position and enforce limit
+                    valid_positions = 0
+                    for symbol, position in loaded_positions.items():
+                        # Check if we've hit the position limit
+                        if valid_positions >= RISK_CONFIG['MAX_OPEN_POSITIONS']:
+                            logger.warning(f"Position limit reached during state load, skipping {symbol}")
+                            continue
+                            
+                        # Check if position still exists in exchange
+                        current_position = self.binance.get_position(symbol)
+                        if current_position and current_position.get('size', 0) > 0:
+                            self.active_positions[symbol] = position
+                            valid_positions += 1
+                        else:
+                            logger.warning(f"Removing invalid position for {symbol} during state load")
+                    
                     self.daily_trades = state.get('daily_trades', 0)
                     self.daily_trades_reset = datetime.fromisoformat(
                         state.get('daily_trades_reset', datetime.now().isoformat())
@@ -92,6 +111,9 @@ class FundingRateBot:
             except Exception as e:
                 logger.error(f"Error loading state: {str(e)}")
                 self._reset_state()
+        else:
+            # If bot_state.json does not exist, reset state to empty
+            self._reset_state()
                 
     def _reset_state(self):
         """Reset bot state to initial values."""
@@ -124,8 +146,9 @@ class FundingRateBot:
                 logger.info("Daily trades counter reset")
                 
             # Check maximum open positions
-            if len(self.active_positions) >= RISK_CONFIG['MAX_OPEN_POSITIONS']:
-                logger.warning(f"Maximum number of open positions reached ({len(self.active_positions)}/{RISK_CONFIG['MAX_OPEN_POSITIONS']})")
+            current_positions = len(self.active_positions)
+            if current_positions >= RISK_CONFIG['MAX_OPEN_POSITIONS']:
+                logger.warning(f"Maximum number of open positions reached ({current_positions}/{RISK_CONFIG['MAX_OPEN_POSITIONS']})")
                 return False
                 
             # Check daily trade limit
@@ -155,6 +178,7 @@ class FundingRateBot:
                 
             self.last_check = current_time
             
+            # Check risk limits before looking for opportunities
             if not self.check_risk_limits():
                 return
                 
@@ -178,6 +202,11 @@ class FundingRateBot:
     def evaluate_trade(self, symbol: str, funding_rate: float):
         """Evaluate and execute a trade if conditions are met."""
         try:
+            # Check risk limits again before executing trade
+            if not self.check_risk_limits():
+                logger.warning(f"Skipping trade for {symbol} due to risk limits")
+                return
+                
             # Check liquidity
             if not self.binance.check_liquidity(symbol):
                 logger.warning(f"Insufficient liquidity for {symbol}")
@@ -230,12 +259,16 @@ class FundingRateBot:
             if not self.binance.set_leverage(symbol, TRADING_CONFIG['MAX_LEVERAGE']):
                 raise ValueError(f"Failed to set leverage for {symbol}")
             
+            # Get current price for size conversion
+            price = self.binance.get_best_maker_price(symbol, 'BUY')
+            asset_size = size / price  # Convert USDT size to asset size
+            
             # Open spot position (always market order)
             spot_order = self.binance.create_spot_order(
                 symbol=symbol,
                 order_type='MARKET',
                 side='BUY',
-                amount=size
+                amount=asset_size  # Use asset size instead of USDT size
             )
             
             # Record spot trade
@@ -243,7 +276,7 @@ class FundingRateBot:
                 'symbol': symbol,
                 'type': 'OPEN',
                 'side': 'BUY',
-                'amount': size,
+                'amount': size,  # Keep USDT amount for reporting
                 'price': spot_order['price'],
                 'fees': spot_order['fee'],
                 'funding_rate': funding_rate
@@ -254,7 +287,7 @@ class FundingRateBot:
                 symbol=symbol,
                 order_type='MARKET',  # This will be overridden if limit order is possible
                 side='SELL',
-                amount=size
+                amount=asset_size  # Use asset size instead of USDT size
             )
             
             # Record futures trade
@@ -262,7 +295,7 @@ class FundingRateBot:
                 'symbol': symbol,
                 'type': 'OPEN',
                 'side': 'SELL',
-                'amount': size,
+                'amount': size,  # Keep USDT amount for reporting
                 'price': futures_order['price'],
                 'fees': futures_order['fee'],
                 'funding_rate': funding_rate
@@ -270,8 +303,8 @@ class FundingRateBot:
                 
             # Record the position
             self.active_positions[symbol] = {
-                'spot_size': size,
-                'futures_size': size,
+                'spot_size': asset_size,  # Store in asset terms
+                'futures_size': asset_size,  # Store in asset terms
                 'entry_rate': funding_rate,
                 'entry_time': time.time(),
                 'spot_order': spot_order,
@@ -282,8 +315,8 @@ class FundingRateBot:
             self.daily_trades += 1
             self._save_state()
             
-            # Print live update
-            self.reports.print_live_updates()
+            # Print live update with actual balance
+            self.reports.print_live_updates(self.binance.get_balance())
             
             logger.info(f"Opened position for {symbol}")
             logger.info(f"Funding rate: {funding_rate*100:.4f}%")
@@ -304,18 +337,18 @@ class FundingRateBot:
                     symbol=symbol,
                     order_type='MARKET',
                     side='SELL',
-                    amount=float(spot_position['size'])
+                    amount=float(spot_position['size'])  # Already in asset terms
                 )
                 logger.info(f"Closed partial spot position for {symbol}")
                 
             # Check if we have a futures position
             futures_position = self.binance.get_position(symbol)
-            if futures_position and float(futures_position.get('size', 0)) > 0:
+            if futures_position and float(futures_position.get('futures_size', 0)) > 0:
                 self.binance.create_futures_order(
                     symbol=symbol,
                     order_type='MARKET',
                     side='BUY',
-                    amount=float(futures_position['size'])
+                    amount=float(futures_position['futures_size'])  # Already in asset terms
                 )
                 logger.info(f"Closed partial futures position for {symbol}")
                 
@@ -346,59 +379,63 @@ class FundingRateBot:
         """Close a position."""
         if symbol not in self.active_positions:
             return
-            
         position = self.active_positions[symbol]
-        
+        # Only close if we have a spot position and size > 0
+        spot_position = self.binance.get_position(symbol)
+        if not spot_position or spot_position.get('size', 0) <= 0:
+            logger.warning(f"No spot position to close for {symbol}")
+            # Clean up the position from our tracking
+            del self.active_positions[symbol]
+            self._save_state()
+            return
         try:
             # Close spot position (always market order)
             spot_order = self.binance.create_spot_order(
                 symbol=symbol,
                 order_type='MARKET',
                 side='SELL',
-                amount=position['spot_size']
+                amount=position['spot_size']  # Already in asset terms
             )
-            
             # Record spot close
             self.reports.record_trade({
                 'symbol': symbol,
                 'type': 'CLOSE',
                 'side': 'SELL',
-                'amount': position['spot_size'],
+                'amount': position['spot_size'] * spot_order['price'],  # Convert to USDT for reporting
                 'price': spot_order['price'],
                 'fees': spot_order['fee'],
                 'profit': (spot_order['price'] - position['spot_order']['price']) * position['spot_size'] - spot_order['fee']
             })
-            
             # Close futures position (let exchange client decide based on price advantage)
             futures_order = self.binance.create_futures_order(
                 symbol=symbol,
                 order_type='MARKET',  # This will be overridden if limit order is possible
                 side='BUY',
-                amount=position['futures_size']
+                amount=position['futures_size']  # Already in asset terms
             )
-            
             # Record futures close
             self.reports.record_trade({
                 'symbol': symbol,
                 'type': 'CLOSE',
                 'side': 'BUY',
-                'amount': position['futures_size'],
+                'amount': position['futures_size'] * futures_order['price'],  # Convert to USDT for reporting
                 'price': futures_order['price'],
                 'fees': futures_order['fee'],
                 'profit': (position['futures_order']['price'] - futures_order['price']) * position['futures_size'] - futures_order['fee']
             })
-                
             logger.info(f"Closed position for {symbol}")
             logger.info(f"Expected profit: {position['expected_profit']:.2f} USDT")
-            
-            # Print live update
-            self.reports.print_live_updates()
-            
+            # Print live update with actual balance
+            self.reports.print_live_updates(self.binance.get_balance())
+            # Clean up the position
             del self.active_positions[symbol]
             self._save_state()
-            
         except Exception as e:
             logger.error(f"Failed to close position for {symbol}: {str(e)}")
+            # If we get an error about insufficient position, clean up our tracking
+            if "Insufficient spot position" in str(e):
+                del self.active_positions[symbol]
+                self._save_state()
             
     def run(self):
         """Main bot loop."""

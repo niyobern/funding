@@ -128,7 +128,8 @@ class TradingReports:
         if not self.trades:
             logger.warning("No trades to generate report for")
             return
-            
+        # Ensure reports directory exists
+        self.reports_dir.mkdir(exist_ok=True)
         # Create report directory
         report_dir = self.reports_dir / datetime.now().strftime("%Y%m%d_%H%M%S")
         report_dir.mkdir(exist_ok=True)
@@ -189,21 +190,20 @@ class TradingReports:
         plt.savefig(report_dir / "trade_distribution.png")
         plt.close()
         
-    def print_live_updates(self):
+    def print_live_updates(self, current_balance=None):
         """Print live trading updates."""
         if not self.trades:
             return
-            
         latest_trade = self.trades[-1]
         summary = self.get_performance_summary()
-        
         logger.info("\n=== Live Trading Update ===")
         logger.info(f"Latest Trade: {latest_trade['symbol']} {latest_trade['type']} {latest_trade['side']}")
         logger.info(f"Amount: {latest_trade['amount']} @ {latest_trade['price']}")
-        logger.info(f"Fees: {latest_trade['fees']:.2f} USDT")
-        if latest_trade['type'] == 'CLOSE':
-            logger.info(f"Profit: {latest_trade['profit']:.2f} USDT")
-        logger.info(f"Current Balance: {summary['current_balance']:.2f} USDT")
+        logger.info(f"Fees: {latest_trade['fees']} USDT")
+        if current_balance is not None:
+            logger.info(f"Current Balance: {current_balance:.2f} USDT")
+        else:
+            logger.info(f"Current Balance: {summary['current_balance']:.2f} USDT")
         logger.info(f"Total Profit: {summary['total_profit']:.2f} USDT")
         logger.info(f"Win Rate: {summary['win_rate']}")
-        logger.info("========================\n") 
+        logger.info("========================") 
