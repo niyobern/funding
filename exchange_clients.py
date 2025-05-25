@@ -60,12 +60,23 @@ class BinanceClient:
     def get_funding_rate(self, symbol: str) -> float:
         """Get the current funding rate for a symbol."""
         try:
-            ticker = self.futures.fetch_ticker(symbol)
-            funding_rate = float(ticker.get('fundingRate', 0))
-            logger.debug(f"Current funding rate for {symbol}: {funding_rate*100:.4f}%")
+            logger.info(f"Fetching funding rate for {symbol}...")
+            funding_info = self.futures.fetch_funding_rate(symbol)
+            logger.info(f"Raw funding info for {symbol}: {funding_info}")
+            
+            if not funding_info:
+                logger.error(f"No funding info returned for {symbol}")
+                return 0.0
+                
+            funding_rate = float(funding_info.get('fundingRate', 0))
+            logger.info(f"Current funding rate for {symbol}: {funding_rate*100:.4f}%")
             return funding_rate
+            
         except ccxt.NetworkError as e:
             logger.error(f"Network error while fetching funding rate for {symbol}: {str(e)}")
+            return 0.0
+        except ccxt.ExchangeError as e:
+            logger.error(f"Exchange error while fetching funding rate for {symbol}: {str(e)}")
             return 0.0
         except Exception as e:
             logger.error(f"Error fetching funding rate for {symbol}: {str(e)}")

@@ -182,10 +182,13 @@ class FundingRateBot:
             if not self.check_risk_limits():
                 return
                 
+            logger.info("\n=== Current Funding Rates ===")
             for symbol in TRADING_PAIRS:
                 try:
                     # Get funding rate
                     funding_rate = self.binance.get_funding_rate(symbol)
+                    status = "OPPORTUNITY" if funding_rate <= TRADING_CONFIG['MIN_FUNDING_RATE'] else "SKIP"
+                    logger.info(f"{symbol}: {funding_rate*100:.4f}% (threshold: {TRADING_CONFIG['MIN_FUNDING_RATE']*100:.4f}%) - {status}")
                     
                     # Check for opportunities
                     if funding_rate <= TRADING_CONFIG['MIN_FUNDING_RATE']:
@@ -195,6 +198,7 @@ class FundingRateBot:
                 except Exception as e:
                     logger.error(f"Error checking {symbol}: {str(e)}")
                     continue
+            logger.info("=== End of Funding Rates ===\n")
                     
         except Exception as e:
             logger.error(f"Error checking opportunities: {str(e)}")
@@ -457,11 +461,18 @@ class FundingRateBot:
         
         while True:
             try:
+                logger.info("Starting main loop iteration...")
                 self.check_opportunities()
+                logger.info("Finished checking opportunities")
                 self.monitor_positions()
+                logger.info("Finished monitoring positions")
+                logger.info(f"Sleeping for {MONITORING_CONFIG['POSITION_CHECK_INTERVAL']} seconds...")
                 time.sleep(MONITORING_CONFIG['POSITION_CHECK_INTERVAL'])
             except Exception as e:
                 logger.error(f"Error in main loop: {str(e)}")
+                logger.error(f"Error type: {type(e)}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
                 time.sleep(60)  # Wait a minute before retrying
                 
 if __name__ == "__main__":
